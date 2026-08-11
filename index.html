@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Factorise!</title>
+<style>
+  :root {
+    --bg: #f4f1ea; --ink: #22303c; --muted: #8a8378;
+    --slot: #e2ddd2; --slot-ok: #cdebd8; --tile: #3d5a80;
+    --good: #2a9d5c; --bad: #c1443a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif;
+    -webkit-user-select: none; user-select: none; overflow-x: hidden;
+  }
+  #hud {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; font-size: 13px; color: var(--muted);
+  }
+  #expression { text-align: center; font-family: Georgia, serif; font-size: 40px; margin: 6px 0; }
+  #hint { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  #board { position: relative; margin: 0 auto; }
+  .slot {
+    position: absolute; border: 2px dashed #c9c2b4; border-radius: 8px;
+    background: var(--slot); transition: background .15s;
+  }
+  .slot.filled { background: var(--slot-ok); }
+  .tile {
+    position: absolute; border-radius: 8px; background: var(--tile); color: #fff;
+    font-family: Georgia, serif; display: flex; align-items: center; justify-content: center;
+    cursor: grab; touch-action: none; box-shadow: 0 2px 5px rgba(0,0,0,.18);
+    transition: left .12s ease-out, top .12s ease-out;
+  }
+  .tile.dragging { cursor: grabbing; transition: none; box-shadow: 0 8px 18px rgba(0,0,0,.28); z-index: 50; }
+  #feedback { text-align: center; font-weight: 700; min-height: 26px; font-size: 15px; padding: 0 12px; }
+  #controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 14px; }
+  button {
+    font: inherit; font-size: 14px; padding: 9px 16px; border-radius: 8px;
+    border: 1px solid #c9c2b4; background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.level.active { background: var(--tile); color: #fff; border-color: var(--tile); }
+  @media (max-width: 520px) { #expression { font-size: 30px; } }
+</style>
+</head>
+<body>
+
+<div id="hud"><span id="stats"></span><span id="clock"></span></div>
+<div id="expression"></div>
+<div id="hint">drag the tiles to factorise &middot; not every tile is needed</div>
+<div id="board"></div>
+<div id="feedback"></div>
+<div id="controls">
+  <button id="check">Check</button>
+  <button id="reset">Reset</button>
+  <button id="next">New problem</button>
+  <span style="width:14px"></span>
+  <button class="level" data-level="1">1</button>
+  <button class="level" data-level="2">2</button>
+  <button class="level" data-level="3">3</button>
+  <button class="level" data-level="0">mixed</button>
+</div>
+
+<script src="factor.js"></script>
+<script>
+const board = document.getElementById("board");
+const GAP = 8, MIN_TILE = 38, MAX_TILE = 56;
+
+let level = 1, problem = null, slots = [], tiles = [], solved = false;
+let started = 0, streak = 0, bestStreak = 0, solvedCount = 0, bestTime = null;
+
+// ------------------------------------------------------------------ layout
+// Positions are recomputed from scratch, so a phone rotating just works.
+function layout() {
+  const width = Math.min(board.clientWidth || window.innerWidth, window.innerWidth) - 16;
+  const perRow = n => Math.max(1, Math.min(n, Math.floor(width / (MIN_TILE + GAP))));
+
+  const slotRows = perRow(slots.length);
+  const size = Math.max(MIN_TILE,
+                        Math.min(MAX_TILE, Math.floor(width / slotRows) - GAP));
+
+  const place = (items, count, topStart, apply) => {
+    const rows = Math.ceil(count / perRow(count));
+    items.forEach((item, i) => {
+      const cols = perRow(count);
+      const row = Math.floor(i / cols), col = i % cols;
+      const inRow = Math.min(count - row * cols, cols);
+      const left = (width + 16 - (inRow * (size + GAP) - GAP)) / 2;
+      apply(item, left + col * (size + GAP), topStart + row * (size + GAP + 6));
+    });
+    return rows;
+  };
+
+  const slotRowCount = place(slots, slots.length, 10, (slot, x, y) => {
+    Object.assign(slot.el.style, {left: x + "px", top: y + "px",
+                                 width: size + "px", height: size + "px"});
+    slot.x = x; slot.y = y;
+  });
+
+  const trayTop = 10 + slotRowCount * (size + GAP + 6) + 44;
+  const trayRowCount = place(tiles, tiles.length, trayTop, (tile, x, y) => {
+    tile.home = {x, y};
+    Object.assign(tile.el.style, {width: size + "px", height: size + "px",
+                                 fontSize: Math.round(size * 0.46) + "px"});
+    if (tile.slot === null) moveTile(tile, x, y);
+    else moveTile(tile, slots[tile.slot].x, slots[tile.slot].y);
+  });
+
+  board.style.height = (trayTop + trayRowCount * (size + GAP + 6) + 10) + "px";
+}
+
+const moveTile = (tile, x, y) => {
+  tile.el.style.left = x + "px";
+  tile.el.style.top = y + "px";
+  tile.x = x; tile.y = y;
+};
+
+// -------------------------------------------------------------- one round
+function newRound() {
+  problem = makeProblem(level);
+  solved = false;
+  started = Date.now();
+  board.innerHTML = "";
+  slots = []; tiles = [];
+  say("", "var(--muted)");
+  document.getElementById("expression").textContent = problem.display;
+
+  for (let i = 0; i < problem.answer.length; i++) {
+    const el = document.createElement("div");
+    el.className = "slot";
+    board.appendChild(el);
+    slots.push({el, x: 0, y: 0, tile: null});
+  }
+
+  const texts = shuffle([...problem.answer,
+                         ...distractors(problem, DISTRACTOR_COUNT[problem.level])]);
+  for (const text of texts) {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.textContent = text;
+    board.appendChild(el);
+    const tile = {el, text, home: {x: 0, y: 0}, x: 0, y: 0, slot: null};
+    el.addEventListener("pointerdown", e => press(e, tile));
+    tiles.push(tile);
+  }
+
+  layout();
+  updateHud();
+}
+
+// -------------------------------------------------------- drag and drop
+let drag = null;
+
+function press(e, tile) {
+  if (solved) return;
+  e.preventDefault();
+  tile.el.setPointerCapture(e.pointerId);
+  tile.el.classList.add("dragging");
+  drag = {tile, px: e.clientX, py: e.clientY};
+
+  if (tile.slot !== null) { freeSlot(tile.slot); tile.slot = null; }
+
+  tile.el.onpointermove = move;
+  tile.el.onpointerup = tile.el.onpointercancel = release;
+}
+
+function move(e) {
+  if (!drag) return;
+  moveTile(drag.tile, drag.tile.x + e.clientX - drag.px, drag.tile.y + e.clientY - drag.py);
+  drag.px = e.clientX; drag.py = e.clientY;
+}
+
+function release() {
+  if (!drag) return;
+  const tile = drag.tile;
+  drag = null;
+  tile.el.classList.remove("dragging");
+  tile.el.onpointermove = tile.el.onpointerup = tile.el.onpointercancel = null;
+
+  const size = tile.el.offsetWidth;
+  let target = null, best = size * 0.85;          // snap radius scales with the tiles
+  slots.forEach((slot, i) => {
+    const d = Math.hypot(slot.x - tile.x, slot.y - tile.y);
+    if (d < best) { target = i; best = d; }
+  });
+
+  if (target === null) { moveTile(tile, tile.home.x, tile.home.y); return; }
+
+  const occupant = slots[target].tile;
+  if (occupant) { occupant.slot = null; moveTile(occupant, occupant.home.x, occupant.home.y); }
+
+  slots[target].tile = tile;
+  tile.slot = target;
+  slots[target].el.classList.add("filled");
+  moveTile(tile, slots[target].x, slots[target].y);
+}
+
+function freeSlot(i) {
+  slots[i].tile = null;
+  slots[i].el.classList.remove("filled");
+}
+
+// ------------------------------------------------------- verdict and HUD
+function check() {
+  if (solved) return;
+  if (slots.some(s => s.tile === null)) { say("Some slots are still empty.", "var(--bad)"); return; }
+
+  const tokens = slots.map(s => s.tile.text);
+  const [correct, message] = judge(problem, tokens);
+
+  if (correct) {
+    const elapsed = (Date.now() - started) / 1000;
+    solved = true; solvedCount++; streak++;
+    bestStreak = Math.max(bestStreak, streak);
+    if (bestTime === null || elapsed < bestTime) bestTime = elapsed;
+    say(`${message}   ${elapsed.toFixed(1)} s   streak ${streak}`, "var(--good)");
+  } else {
+    streak = 0;
+    say(message, "var(--bad)");
+  }
+  updateHud();
+}
+
+function resetTiles() {
+  if (solved) return;
+  tiles.forEach(t => { t.slot = null; moveTile(t, t.home.x, t.home.y); });
+  slots.forEach((_, i) => freeSlot(i));
+  say("", "var(--muted)");
+}
+
+const say = (text, colour) => {
+  const el = document.getElementById("feedback");
+  el.textContent = text; el.style.color = colour;
+};
+
+function updateHud() {
+  const best = bestStreak ? `   best streak ${bestStreak}` : "";
+  const pb = bestTime ? `   best ${bestTime.toFixed(1)} s` : "";
+  document.getElementById("stats").textContent =
+    `level ${problem.level}: ${LEVEL_NAMES[problem.level]}   solved ${solvedCount}   streak ${streak}${best}${pb}`;
+}
+
+setInterval(() => {
+  if (problem && !solved)
+    document.getElementById("clock").textContent = ((Date.now() - started) / 1000).toFixed(1) + " s";
+}, 200);
+
+// ------------------------------------------------------------------ wiring
+document.getElementById("check").onclick = check;
+document.getElementById("reset").onclick = resetTiles;
+document.getElementById("next").onclick = newRound;
+document.querySelectorAll(".level").forEach(btn => {
+  btn.onclick = () => {
+    level = Number(btn.dataset.level);
+    document.querySelectorAll(".level").forEach(b => b.classList.toggle("active", b === btn));
+    newRound();
+  };
+});
+document.querySelector('.level[data-level="1"]').classList.add("active");
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter") check();
+  if (e.key === " ") { e.preventDefault(); newRound(); }
+});
+window.addEventListener("resize", layout);
+window.addEventListener("orientationchange", () => setTimeout(layout, 120));
+
+newRound();
+</script>
+</body>
+</html>
