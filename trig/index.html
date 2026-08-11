@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Egységkör</title>
+<style>
+  :root { --bg:#f4f1ea; --ink:#22303c; --muted:#8a8378; --circ:#3d5a80;
+          --good:#2a9d5c; --bad:#c1443a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); text-align:center;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif;
+         -webkit-user-select:none; user-select:none; }
+  #wrap { max-width:560px; margin:0 auto; padding:10px 12px 28px; }
+  canvas { touch-action:none; display:block; margin:0 auto; cursor:crosshair; }
+  #prompt { font-family:Georgia,serif; font-size:22px; margin:10px 0 4px; min-height:30px; }
+  #status { font-size:14px; color:var(--muted); min-height:22px; margin-bottom:10px; }
+  #options { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  #options button { font-family:Georgia,serif; font-size:19px; padding:13px 4px; }
+  button { font-size:14px; padding:9px 15px; border:1px solid #c9c2b4; border-radius:8px;
+           background:#fff; color:var(--ink); cursor:pointer; }
+  button:disabled { color:#b4ada2; cursor:default; }
+  button.right { background:#cdebd8; border-color:var(--good); color:var(--ink); }
+  button.wrong { background:#f5cfcb; border-color:var(--bad); color:var(--ink); }
+  #bar { display:flex; flex-wrap:wrap; justify-content:center; gap:10px;
+         align-items:center; margin-top:16px; font-size:13px; color:var(--muted); }
+  label { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  #score { font-size:13px; color:var(--muted); margin-top:12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="board"></canvas>
+  <div id="prompt"></div>
+  <div id="status"></div>
+  <div id="options">
+    <button data-i="0"></button><button data-i="1"></button>
+    <button data-i="2"></button><button data-i="3"></button>
+  </div>
+  <div id="bar">
+    <button id="next">Következő</button>
+    <label><input type="checkbox" id="arbitrary"> tetszőleges szög</label>
+    <label><input type="checkbox" id="helper" checked> segédvonalak</label>
+  </div>
+  <div id="score"></div>
+</div>
+
+<script src="trig.js"></script>
+<script>
+const TOLERANCE = 8;                       // fokban
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+
+let S = 0, C = 0, R = 0;                   // oldalhossz, közép, sugár (CSS px)
+let question = null, phase = "point", clicked = null, revealed = false;
+let pointPoints = 0, score = 0, rounds = 0;
+
+const fmt = d => String(Math.round(d * 10) / 10);
+const toXY = (deg, radius = R) => [C + radius * Math.cos(deg * Math.PI / 180),
+                                   C - radius * Math.sin(deg * Math.PI / 180)];
+
+// ------------------------------------------------------------------- rajzolás
+function resize() {
+  S = Math.min(document.getElementById("wrap").clientWidth - 24,
+               window.innerHeight * 0.52, 460);
+  C = S / 2;
+  R = S * 0.37;
+  const dpr = window.devicePixelRatio || 1;          // éles vonalak retina kijelzon
+  canvas.width = S * dpr; canvas.height = S * dpr;
+  canvas.style.width = S + "px"; canvas.style.height = S + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, S, S);
+  ctx.lineWidth = 1;
+
+  ctx.strokeStyle = "#e2ddd2";                       // rács
+  for (const k of [-1, -0.5, 0.5, 1]) {
+    line(C + k * R, 6, C + k * R, S - 6);
+    line(6, C - k * R, S - 6, C - k * R);
+  }
+
+  ctx.strokeStyle = "#b0a99c";                       // tengelyek
+  line(4, C, S - 4, C); line(C, S - 4, C, 4);
+  ctx.fillStyle = "#8a8378";
+  ctx.font = "11px Helvetica"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("1", C + R, C + 13); ctx.fillText("\u22121", C - R, C + 13);
+  ctx.fillText("1", C - 14, C - R); ctx.fillText("\u22121", C - 14, C + R);
+  ctx.font = "13px Georgia";
+  ctx.fillText("x", S - 10, C - 12); ctx.fillText("y", C + 12, 10);
+
+  ctx.strokeStyle = "#3d5a80"; ctx.lineWidth = 2;    // egységkör
+  ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI); ctx.stroke();
+
+  if (document.getElementById("helper").checked) {   // 30 fokonként osztás
+    ctx.strokeStyle = "#b0a99c"; ctx.lineWidth = 1;
+    for (let d = 0; d < 360; d += 30) {
+      const [x1, y1] = toXY(d, R - 6), [x2, y2] = toXY(d, R + 6);
+      line(x1, y1, x2, y2);
+    }
+  }
+
+  if (clicked !== null) mark(clicked, "#c1443a", "te");
+  if (revealed) mark(question.degrees, "#2a9d5c", fmt(question.degrees) + "\u00b0");
+}
+
+function line(x1, y1, x2, y2) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+function mark(deg, colour, label) {
+  const [x, y] = toXY(deg);
+  ctx.strokeStyle = colour; ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]); line(C, C, x, y); ctx.setLineDash([]);
+  ctx.fillStyle = colour;
+  ctx.beginPath(); ctx.arc(x, y, 6, 0, 2 * Math.PI); ctx.fill();
+  const [lx, ly] = toXY(deg, R + 22);
+  ctx.font = "bold 11px Helvetica"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(label, lx, ly);
+}
+
+// ---------------------------------------------------------------------- menet
+function newRound() {
+  question = makeQuestion(document.getElementById("arbitrary").checked);
+  phase = "point"; clicked = null; revealed = false; pointPoints = 0;
+
+  document.getElementById("prompt").textContent =
+    `Jelöld be a ${fmt(question.degrees)}\u00b0 -hoz tartozó pontot!`;
+  say("Koppints az egységkörre.", "var(--muted)");
+  document.querySelectorAll("#options button").forEach(b => {
+    b.textContent = ""; b.disabled = true; b.className = "";
+  });
+  draw();
+  updateScore();
+}
+
+canvas.addEventListener("pointerdown", e => {
+  if (phase !== "point") return;
+  const r = canvas.getBoundingClientRect();
+  const dx = e.clientX - r.left - C, dy = C - (e.clientY - r.top);
+  if (dx === 0 && dy === 0) return;
+
+  clicked = ((Math.atan2(dy, dx) * 180 / Math.PI) % 360 + 360) % 360;
+  const error = angleError(clicked, question.degrees);
+  const [pts, verdict] = pointScore(error, TOLERANCE);
+  pointPoints = pts;
+
+  revealed = true; phase = "choice";
+  draw();
+  say(`${verdict}  Eltérés: ${error.toFixed(1)}\u00b0`,
+      pts ? "var(--good)" : "var(--bad)");
+
+  document.getElementById("prompt").textContent =
+    `${question.func}(${fmt(question.degrees)}\u00b0) = ?`;
+  document.querySelectorAll("#options button").forEach((b, i) => {
+    b.textContent = question.options[i]; b.disabled = false;
+  });
+});
+
+function answer(index) {
+  if (phase !== "choice") return;
+  phase = "done";
+
+  document.querySelectorAll("#options button").forEach((b, i) => {
+    b.disabled = true;
+    if (i === question.correctIndex) b.className = "right";
+    else if (i === index) b.className = "wrong";
+  });
+
+  const right = index === question.correctIndex;
+  score += pointPoints + (right ? 2 : 0);
+  rounds++;
+  say(right ? "Helyes!" : `A helyes válasz: ${question.correctText}`,
+      right ? "var(--good)" : "var(--bad)");
+  updateScore();
+}
+
+const say = (text, colour) => {
+  const el = document.getElementById("status");
+  el.textContent = text; el.style.color = colour;
+};
+
+const updateScore = () => {
+  document.getElementById("score").textContent =
+    rounds ? `${score} / ${4 * rounds} pont, ${rounds} kör` : "";
+};
+
+// --------------------------------------------------------------------- wiring
+document.querySelectorAll("#options button").forEach(b => {
+  b.onclick = () => answer(Number(b.dataset.i));
+});
+document.getElementById("next").onclick = newRound;
+document.getElementById("arbitrary").onchange = newRound;
+document.getElementById("helper").onchange = draw;
+document.addEventListener("keydown", e => {
+  if (e.key === " ") { e.preventDefault(); newRound(); }
+  if (["1", "2", "3", "4"].includes(e.key)) answer(Number(e.key) - 1);
+});
+window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 120));
+
+resize();
+newRound();
+</script>
+</body>
+</html>
