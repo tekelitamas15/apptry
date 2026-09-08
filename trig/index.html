@@ -235,7 +235,7 @@ function answer(index) {
   score += pointPoints + (right ? 2 : 0);
   rounds++;
 
-  const which = question.func === "cos" ? "elso" : "második";
+  const which = question.func === "cos" ? "első" : "második";
   say(right ? `Helyes! A ${question.func} a pont ${which} koordinátája.`
             : `A helyes válasz: ${question.correctText} \u2014 a pont ${which} koordinátája.`,
       right ? "var(--good)" : "var(--bad)");
