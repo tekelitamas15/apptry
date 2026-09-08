@@ -118,30 +118,43 @@ function draw() {
     }
   }
 
-  if (showProjection) projection();                  // a tengelyek alá kerülne, ezért itt
-  if (revealed) angleArc();                          // a bezárt szög íve, csak jelölés után
+  if (revealed) angleArc();                          // az ív a szakaszok alá kerül
+  if (showProjection) projection();
   if (clicked !== null) mark(clicked, "#c1443a", "te");
-  if (revealed) mark(question.degrees, "#2a9d5c", fmt(question.degrees) + "\u00b0");
+  if (revealed) mark(question.degrees, "#2a9d5c", "");   // a fok már a phi mellett áll
+  if (revealed) angleLabel();                        // a felirat legfölülre
 }
 
-/* A 0 foktól a szögig futó ív, phi jelöléssel. A canvas y-tengelye lefelé no,
-   ezért a matematikai pozitív (óramutatóval ellentétes) irány itt a negatív. */
+/* A 0 foktól a szögig futó ív. A canvas y-tengelye lefelé nő, ezért a
+   matematikai pozitív (óramutatóval ellentétes) irány itt a negatív. */
+const ARC_R = () => R * 0.3;
+
 function angleArc() {
   const deg = question.degrees;
   if (deg < 1) return;                               // 0 foknál nincs mit rajzolni
-  const arcR = R * 0.3;
-
   ctx.strokeStyle = "#6b6459"; ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(C, C, arcR, 0, -deg * Math.PI / 180, true);
+  ctx.arc(C, C, ARC_R(), 0, -deg * Math.PI / 180, true);
   ctx.stroke();
+  ctx.lineWidth = 1;
+}
 
-  const [lx, ly] = toXY(deg / 2, arcR + 16);         // a felezoirányban, kicsit kijjebb
-  ctx.fillStyle = "#f4f1ea";                         // háttérkorong: ne olvadjon össze
-  ctx.beginPath(); ctx.arc(lx, ly, 11, 0, 2 * Math.PI); ctx.fill();
-  ctx.font = "italic bold 17px Georgia"; ctx.fillStyle = "#6b6459";
+/* A felirat legfölülre kerül. Kontúrral rajzoljuk a háttér színével, így
+   olvasható marad akkor is, ha vetítőszakasz fut alatta - a szakaszt viszont
+   nem takarja ki, ahogy egy kitöltött háttértéglalap tenné. */
+function angleLabel() {
+  const deg = question.degrees;
+  if (deg < 1) return;
+  const [lx, ly] = toXY(deg / 2, ARC_R() + 20);
+  const label = `\u03c6 = ${fmt(deg)}\u00b0`;
+
+  ctx.font = "italic bold 15px Georgia";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("\u03c6", lx, ly);
+  ctx.lineWidth = 4; ctx.lineJoin = "round";
+  ctx.strokeStyle = "#f4f1ea";
+  ctx.strokeText(label, lx, ly);
+  ctx.fillStyle = "#6b6459";
+  ctx.fillText(label, lx, ly);
   ctx.lineWidth = 1;
 }
 
@@ -179,7 +192,7 @@ function projection() {
       ctx.fillText(label, (C + px) / 2, C + (py > C ? -16 : 18));
     } else {
       ctx.save();
-      // A phi a szögfelezo irányában áll (deg < 180 esetén jobbra), ezért a
+      // A phi a szögfelező irányában áll (deg < 180 esetén jobbra), ezért a
       // sin feliratot mindig az ellenkezo oldalra tesszük.
       const phiOnRight = question.degrees < 180;
       ctx.translate(C + (phiOnRight ? -34 : 36), (C + py) / 2);
@@ -260,7 +273,7 @@ function answer(index) {
   score += pointPoints + (right ? 2 : 0);
   rounds++;
 
-  const which = question.func === "cos" ? "elso" : "második";
+  const which = question.func === "cos" ? "első" : "második";
   say(right ? `Helyes! A ${question.func} a pont ${which} koordinátája.`
             : `A helyes válasz: ${question.correctText} \u2014 a pont ${which} koordinátája.`,
       right ? "var(--good)" : "var(--bad)");
