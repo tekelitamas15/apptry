@@ -49,11 +49,15 @@
 <script src="trig.js"></script>
 <script>
 const TOLERANCE = 8;                       // fokban
+const COS_COLOUR = "#c1443a";              // a vízszintes koordináta
+const SIN_COLOUR = "#2a6fb0";              // a függoleges koordináta
+
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 let S = 0, C = 0, R = 0;                   // oldalhossz, közép, sugár (CSS px)
 let question = null, phase = "point", clicked = null, revealed = false;
+let showProjection = false;                // a válasz után kapcsol be
 let pointPoints = 0, score = 0, rounds = 0;
 
 const fmt = d => String(Math.round(d * 10) / 10);
@@ -76,6 +80,7 @@ function resize() {
 function draw() {
   ctx.clearRect(0, 0, S, S);
   ctx.lineWidth = 1;
+  ctx.lineCap = "butt";
 
   ctx.strokeStyle = "#e2ddd2";                       // rács
   for (const k of [-1, -0.5, 0.5, 1]) {
@@ -85,12 +90,22 @@ function draw() {
 
   ctx.strokeStyle = "#b0a99c";                       // tengelyek
   line(4, C, S - 4, C); line(C, S - 4, C, 4);
+
+  // a pozitív x-tengely: ez a 0 fok, ahonnan a szöget mérjük
+  ctx.strokeStyle = "#6b6459"; ctx.lineWidth = 3;
+  line(C, C, S - 4, C);
+  ctx.lineWidth = 1;
+
   ctx.fillStyle = "#8a8378";
   ctx.font = "11px Helvetica"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText("1", C + R, C + 13); ctx.fillText("\u22121", C - R, C + 13);
   ctx.fillText("1", C - 14, C - R); ctx.fillText("\u22121", C - 14, C + R);
   ctx.font = "13px Georgia";
   ctx.fillText("x", S - 10, C - 12); ctx.fillText("y", C + 12, 10);
+  if (!showProjection) {          // a vetítés feliratával ütközne, ezért csak addig
+    ctx.font = "bold 10px Helvetica"; ctx.fillStyle = "#6b6459";
+    ctx.fillText("0\u00b0", C + R * 0.55, C - 11);
+  }
 
   ctx.strokeStyle = "#3d5a80"; ctx.lineWidth = 2;    // egységkör
   ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI); ctx.stroke();
@@ -103,12 +118,54 @@ function draw() {
     }
   }
 
+  if (showProjection) projection();                  // a tengelyek alá kerülne, ezért itt
   if (clicked !== null) mark(clicked, "#c1443a", "te");
   if (revealed) mark(question.degrees, "#2a9d5c", fmt(question.degrees) + "\u00b0");
 }
 
 function line(x1, y1, x2, y2) {
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+/* A helyes ponthoz tartozó koordináták: a cos a vízszintes, a sin a függoleges.
+   A kérdezett koordináta vastag és felirattal, a másik halványan, viszonyításnak. */
+function projection() {
+  const [px, py] = toXY(question.degrees);
+  const asked = question.func;
+
+  // szaggatott segédvonalak a ponttól a két tengelyig
+  ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.strokeStyle = "#b0a99c";
+  line(px, py, px, C); line(px, py, C, py);
+  ctx.setLineDash([]);
+
+  const drawAxisSegment = (isCos, emphasised) => {
+    const colour = isCos ? COS_COLOUR : SIN_COLOUR;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = emphasised ? 6 : 2;
+    ctx.globalAlpha = emphasised ? 1 : 0.35;
+    ctx.lineCap = "round";
+    if (isCos) line(C, C, px, C); else line(C, C, C, py);
+    ctx.globalAlpha = 1;
+    ctx.lineCap = "butt";
+
+    if (!emphasised) return;
+    const value = isCos ? question.cos : question.sin;
+    const label = `${isCos ? "cos" : "sin"} = ${exact(value)}`;
+    ctx.font = "bold 13px Georgia"; ctx.fillStyle = colour;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (isCos) {
+      ctx.fillText(label, (C + px) / 2, C + (py > C ? -16 : 18));
+    } else {
+      ctx.save();
+      ctx.translate(C + (px > C ? -20 : 22), (C + py) / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    }
+  };
+
+  drawAxisSegment(asked !== "cos", false);           // a másik koordináta halványan
+  drawAxisSegment(asked === "cos", true);            // a kérdezett kiemelve
 }
 
 function mark(deg, colour, label) {
@@ -125,7 +182,8 @@ function mark(deg, colour, label) {
 // ---------------------------------------------------------------------- menet
 function newRound() {
   question = makeQuestion(document.getElementById("arbitrary").checked);
-  phase = "point"; clicked = null; revealed = false; pointPoints = 0;
+  phase = "point"; clicked = null; revealed = false; showProjection = false;
+  pointPoints = 0;
 
   document.getElementById("prompt").textContent =
     `Jelöld be a ${fmt(question.degrees)}\u00b0 -hoz tartozó pontot!`;
@@ -170,10 +228,16 @@ function answer(index) {
     else if (i === index) b.className = "wrong";
   });
 
+  showProjection = true;                    // most már megmutatjuk, honnan jön az érték
+  draw();
+
   const right = index === question.correctIndex;
   score += pointPoints + (right ? 2 : 0);
   rounds++;
-  say(right ? "Helyes!" : `A helyes válasz: ${question.correctText}`,
+
+  const which = question.func === "cos" ? "elso" : "második";
+  say(right ? `Helyes! A ${question.func} a pont ${which} koordinátája.`
+            : `A helyes válasz: ${question.correctText} \u2014 a pont ${which} koordinátája.`,
       right ? "var(--good)" : "var(--bad)");
   updateScore();
 }
